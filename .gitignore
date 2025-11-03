@@ -1,0 +1,7 @@
+data/photos/*
+data/json/*
+data/source/*
+data/compressed/*
+
+.venv*
+*.DS_Store*

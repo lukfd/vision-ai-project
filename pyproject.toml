@@ -1,0 +1,13 @@
+[project]
+name = "vision-ai-project"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "pyarrow>=22.0.0",
+]
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"

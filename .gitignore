@@ -4,5 +4,9 @@ data/source/*
 data/compressed/*
 data/original/*
 
+logs/*
+models/basic_cnn/*
+
+
 .venv*
 *.DS_Store*

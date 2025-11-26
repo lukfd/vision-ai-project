@@ -22,9 +22,7 @@ class BasicCNN(nn.Module):
         )
         self.gap = nn.AdaptiveAvgPool2d((1, 1))
         self.lin = nn.Sequential(
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Linear(64, 3),
+            nn.Linear(128, 3),
         )
 
         self.softmax = nn.Softmax(dim=1)

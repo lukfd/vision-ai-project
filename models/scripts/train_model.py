@@ -26,6 +26,8 @@ DEVICE = (
     else "cpu"
 )
 
+transforms = models.ResNet18_Weights.DEFAULT.transforms()
+
 
 def get_model(model_type: str, model_loc: str) -> nn.Module:
     if model_type == "basic_cnn":
@@ -37,6 +39,14 @@ def get_model(model_type: str, model_loc: str) -> nn.Module:
             model = models.resnet18(weights="DEFAULT")
         else:
             model = models.resnet18()
+
+        model.fc = nn.Linear(model.fc.in_features, 3)
+        model = model.to(DEVICE)
+    elif model_type == "resnet50":
+        if not model_loc:
+            model = models.resnet50(weights="DEFAULT")
+        else:
+            model = models.resnet50()
 
         model.fc = nn.Linear(model.fc.in_features, 3)
         model = model.to(DEVICE)
@@ -71,8 +81,8 @@ def train_one_epoch(m: nn.Module, loader: DataLoader, o: torch.optim.Optimizer, 
 
         running_loss += loss.item()
 
-        if i % 5 == 0:
-            print(f"running loss: {running_loss / (i + 1)}")
+        if (i + 1) % 10 == 0:
+            print(f"{i + 1} / {len(loader)} -- running loss: {running_loss / (i + 1)}")
 
     return m, running_loss / len(loader)
 
@@ -80,9 +90,12 @@ def train_one_epoch(m: nn.Module, loader: DataLoader, o: torch.optim.Optimizer, 
 def score_model(m: nn.Module, loader: DataLoader, lf: nn.Module):
     running_loss = 0.0
 
-    for _, (inputs, labels) in enumerate(loader):
+    for i, (inputs, labels) in enumerate(loader):
         loss = get_loss(m, inputs, labels, lf)
         running_loss += loss.item()
+
+        if (i + 1) % 10 == 0:
+            print(f"{i + 1} / {len(loader)} -- running loss: {running_loss / (i + 1)}")
 
     return running_loss / len(loader)
 
@@ -91,7 +104,7 @@ def get_best_model(model_type: str, root_dir: str):
     saved_models = os.listdir(root_dir)
     m = get_model(model_type, saved_models[0])
     m.load_state_dict(torch.load(f"{root_dir}/{saved_models[0]}", weights_only=True))
-    print(f"evaulating best model -- {saved_models[0]}")
+    print(f"evaluating best model -- {saved_models[0]}")
 
     return m, saved_models[0]
 
@@ -110,10 +123,11 @@ def run_classification(best_model, root_dir: str, model_home: str, loader: DataL
 
     all_labels = np.concatenate(all_labels)
     all_predictions = np.concatenate(all_predictions)
-    print(classification_report(all_labels, all_predictions, zero_division=np.nan))
+    results = classification_report(all_labels, all_predictions, zero_division=np.nan)
+    print(results)
 
     with open(f"{root_dir}/{model_home}.txt", "w") as f:
-        f.write(classification_report(all_labels, all_predictions))
+        f.write(results)
 
 
 def main(
@@ -160,6 +174,7 @@ def main(
         photos_scores.select(["star_category"]).to_pandas().star_category,
         photos_scores.select(["photo_id"]).to_pandas().photo_id,
         PHOTO_DIR,
+        transform=transforms,
     )
 
     train, val, test = torch.utils.data.random_split(yelp_photos, [0.5, 0.3, 0.2])
@@ -178,8 +193,7 @@ def main(
     loss_fn = torch.nn.BCEWithLogitsLoss(
         pos_weight=torch.tensor(weights).to(torch.float32).to(DEVICE)
     )
-    print(summary(model))
-    model(yelp_photos.__getitem__(1)[0].unsqueeze(0).to(DEVICE))
+    summary(model)
 
     # %%
     for _ in range(epochs):
@@ -206,6 +220,7 @@ def main(
             model_path = f"{root_dir}/epoch{epoch_number}_{round(vloss, 3)}"
             [os.remove(os.path.join(root_dir, f)) for f in os.listdir(root_dir)]
             torch.save(model.state_dict(), model_path)
+            print("***saved***")
 
         print(f"EPOCH TIME: {time.time() - st}")
 
@@ -234,4 +249,10 @@ if __name__ == "__main__":
         model_type = args.t
 
     print(model_type, args.e, args.m, args.b, args.d)
-    main(model_type, args.m, args.d or 10_000, args.b or 200, args.e or 1)
+    main(
+        model_type,
+        args.m,
+        args.d or 10_000,
+        args.b or 200,
+        0 if args.e == 0 else (args.e or 1),
+    )

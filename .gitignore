@@ -7,7 +7,7 @@ data/original/*
 *.jpg*
 logs/*
 models/basic_cnn/*
-
+*.jpg
 
 .venv*
 *.DS_Store*

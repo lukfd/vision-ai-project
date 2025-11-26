@@ -1,5 +1,5 @@
 # usage:
-#  - new model: uv run models/scripts/train_model.py -t basic_cnn
+#  - new model: uv run models/scripts/train_model.py -t resnet
 #  - existing: uv run models/scripts/train_model.py -m models/basic_cnn/20251126_094206/epoch1_0.913
 import argparse
 import os
@@ -11,6 +11,7 @@ import pyarrow as pa
 import torch
 from pyarrow import parquet
 from sklearn.metrics import classification_report
+from torchvision import models
 from torch import nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
@@ -18,21 +19,40 @@ from torchinfo import summary
 
 from image_data import ImageData
 
-photo_directory = "data/clean/reduced_photos"
-
-device = (
+PHOTO_DIR = "data/clean/reduced_photos"
+DEVICE = (
     torch.accelerator.current_accelerator().type
     if torch.accelerator.is_available()
     else "cpu"
 )
 
 
+def get_model(model_type: str, model_loc: str) -> nn.Module:
+    if model_type == "basic_cnn":
+        from basic_cnn import BasicCNN
+
+        model = BasicCNN().to(DEVICE)
+    elif model_type == "resnet":
+        if not model_loc:
+            model = models.resnet18(weights="DEFAULT")
+        else:
+            model = models.resnet18()
+
+        model.fc = nn.Linear(model.fc.in_features, 3)
+        model = model.to(DEVICE)
+    else:
+        print(f"{model_type} not defined, exiting")
+        raise Exception(f"{model_type} not defined")
+
+    return model
+
+
 def get_loss(
     m: nn.Module, inputs: torch.Tensor, labels: torch.Tensor, lf: nn.Module
 ) -> torch.Tensor:
     inputs, labels = (
-        inputs.to(device),
-        labels.to(device).to(torch.float32).squeeze(),
+        inputs.to(DEVICE),
+        labels.to(DEVICE).to(torch.float32).squeeze(),
     )
     outputs = m(inputs)
     loss = lf(outputs, labels)
@@ -67,29 +87,32 @@ def score_model(m: nn.Module, loader: DataLoader, lf: nn.Module):
     return running_loss / len(loader)
 
 
-def run_classification(ModelClass, root_dir: str, loader: DataLoader):
+def get_best_model(model_type: str, root_dir: str):
     saved_models = os.listdir(root_dir)
-    best_model = ModelClass().to(device)
-    best_model.load_state_dict(
-        torch.load(f"{root_dir}/{saved_models[0]}", weights_only=True)
-    )
+    m = get_model(model_type, saved_models[0])
+    m.load_state_dict(torch.load(f"{root_dir}/{saved_models[0]}", weights_only=True))
+    print(f"evaulating best model -- {saved_models[0]}")
 
+    return m, saved_models[0]
+
+
+def run_classification(best_model, root_dir: str, model_home: str, loader: DataLoader):
     all_labels = []
     all_predictions = []
 
     best_model.eval()
     with torch.no_grad():
         for inputs, labels in loader:
-            inputs = inputs.to(device)
+            inputs = inputs.to(DEVICE)
             outputs = best_model(inputs)
             all_labels.append(labels.argmax(dim=1).cpu().numpy())
             all_predictions.append(outputs.argmax(dim=1).cpu().numpy())
 
     all_labels = np.concatenate(all_labels)
     all_predictions = np.concatenate(all_predictions)
-    print(classification_report(all_labels, all_predictions))
+    print(classification_report(all_labels, all_predictions, zero_division=np.nan))
 
-    with open(f"{root_dir}/{saved_models[0]}.txt", "w") as f:
+    with open(f"{root_dir}/{model_home}.txt", "w") as f:
         f.write(classification_report(all_labels, all_predictions))
 
 
@@ -97,23 +120,17 @@ def main(
     model_type: str,
     model_loc: str = "",
     dataset_size: int = 10_000,
-    batch_size: int = 2000,
+    batch_size: int = 1000,
     epochs=1,
 ):
-    if model_type == "basic_cnn":
-        from basic_cnn import BasicCNN as Model
-
-        model_type = "basic_cnn"
-    else:
-        print(f"{model_type} not defined, exiting")
-        return
     # %%
+    model = get_model(model_type, model_loc)
+
     if model_loc:
         timestamp = model_loc.split("/")[2]
         best_vloss = float(model_loc.split("_")[-1])
         epoch_number = int(model_loc.split("epoch")[1].split("_")[0])
         root_dir = model_loc.rsplit("/", 1)[0]
-        model = Model().to(device)
         model.load_state_dict(torch.load(f"{model_loc}", weights_only=True))
     else:
         epoch_number = 0
@@ -121,7 +138,6 @@ def main(
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         root_dir = f"models/{model_type}/{timestamp}"
         os.makedirs(root_dir)
-        model = Model().to(device)
 
     # %%
     photos_scores = parquet.read_table("data/clean/model_data.parquet")
@@ -131,7 +147,6 @@ def main(
         pa.array(
             photos_scores.select(["stars"])
             .to_pandas()
-            # NOTE: just trying to slightly populate groups
             .stars.apply(lambda r: (0.0 if r <= 3 else 1.0) if r <= 4 else 2.0)
         ),
     ).take(list(range(dataset_size)))
@@ -144,7 +159,7 @@ def main(
     yelp_photos = ImageData(
         photos_scores.select(["star_category"]).to_pandas().star_category,
         photos_scores.select(["photo_id"]).to_pandas().photo_id,
-        photo_directory,
+        PHOTO_DIR,
     )
 
     train, val, test = torch.utils.data.random_split(yelp_photos, [0.5, 0.3, 0.2])
@@ -161,10 +176,10 @@ def main(
     writer = SummaryWriter(f"logs/{model_type}_{format(timestamp)}")
     opt = torch.optim.Adam(model.parameters(), lr=0.001)
     loss_fn = torch.nn.BCEWithLogitsLoss(
-        pos_weight=torch.tensor(weights).to(torch.float32).to(device)
+        pos_weight=torch.tensor(weights).to(torch.float32).to(DEVICE)
     )
     print(summary(model))
-    model(yelp_photos.__getitem__(1)[0].unsqueeze(0).to(device))
+    model(yelp_photos.__getitem__(1)[0].unsqueeze(0).to(DEVICE))
 
     # %%
     for _ in range(epochs):
@@ -194,7 +209,8 @@ def main(
 
         print(f"EPOCH TIME: {time.time() - st}")
 
-    run_classification(Model, root_dir, test_loader)
+    model, locn = get_best_model(model_type, root_dir)
+    run_classification(model, root_dir, locn, test_loader)
 
 
 if __name__ == "__main__":
@@ -212,9 +228,10 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    print(args.e, args.m, args.b, args.d)
     if args.m:
         model_type = args.m.split("/")[1]
     else:
         model_type = args.t
-    main(model_type, args.m, args.d or 10_000, args.b or 2000, args.e or 1)
+
+    print(model_type, args.e, args.m, args.b, args.d)
+    main(model_type, args.m, args.d or 10_000, args.b or 200, args.e or 1)

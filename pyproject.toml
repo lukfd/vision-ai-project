@@ -8,6 +8,7 @@ dependencies = [
     "ipykernel>=7.1.0",
     "numpy>=2.3.4",
     "pandas>=2.3.3",
+    "plotnine>=0.15.1",
     "pyarrow>=22.0.0",
     "pyarrow-stubs>=20.0.0.20251107",
     "scikit-learn>=1.7.2",

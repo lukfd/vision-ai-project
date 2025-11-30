@@ -5,11 +5,14 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "geopandas>=1.1.1",
     "ipykernel>=7.1.0",
     "numpy>=2.3.4",
     "pandas>=2.3.3",
+    "plotnine>=0.15.1",
     "pyarrow>=22.0.0",
     "pyarrow-stubs>=20.0.0.20251107",
+    "pygris>=0.2.0",
     "scikit-learn>=1.7.2",
     "tensorboard>=2.20.0",
     "torch>=2.9.1",
